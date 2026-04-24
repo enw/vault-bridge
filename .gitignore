@@ -1,5 +1,4 @@
-.xcuserdata/
-*.xcodeproj/
+*.xcuserdata/
 *.xcworkspace/
 Pods/
 *.xccheckout/
