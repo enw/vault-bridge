@@ -1,0 +1,11 @@
+.xcuserdata/
+*.xcodeproj/
+*.xcworkspace/
+Pods/
+*.xccheckout/
+DerivedData/
+*.hms/
+.build/
+*.swiftpm/
+.DS_Store
+.build-artifacts/
