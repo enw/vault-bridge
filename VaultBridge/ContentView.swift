@@ -15,37 +15,35 @@ struct ContentView: View {
 	}
 	
 	var body: some View {
-		HSplitView {
-			// Vault navigator sidebar
+		HSplitView(spacing: 0) {
+			// Left sidebar - vault navigator
 			vaultSidebar
 			
-			// Main content area
-			VSplitView {
-				// Note list
+			// Right panel - note content
+			VSplitView(spacing: 0) {
+				// Middle - note list
 				NoteListView(
 					notes: filteredNotes,
 					selectedNote: $selectedNote,
 					searchText: $searchText
 				)
 				
-				// Note detail
+				// Bottom - note detail or placeholder
 				if let note = selectedNote {
 					NoteDetailView(note: note)
-						.splitViewDividerStyle(.thick)
 				} else {
 					PlaceholderView()
-						.splitViewDividerStyle(.thick)
 				}
 			}
-		}
-		.task {
-			await loadNotes()
 		}
 		.frame(minWidth: 1200, minHeight: 700)
 		.padding(8)
 		.background(Color.black)
 		.foregroundColor(.white)
 		.font(.system(size: 12, weight: .regular, design: .monospaced))
+		.task {
+			await loadNotes()
+		}
 	}
 	
 	@MainActor
@@ -54,6 +52,7 @@ struct ContentView: View {
 		defer { isLoading = false }
 		
 		guard FileManager.default.fileExists(atPath: vaultPath) else {
+			print("Vault path not found: \(vaultPath)")
 			return
 		}
 		
@@ -66,7 +65,7 @@ struct ContentView: View {
 			
 			let mdFiles = contents.filter { $0.pathExtension == "md" }
 			
-			notes = try await withThrowingTaskGroup(of: Note.self) { group in
+			notes = try await withThrowingTaskGroup(of: Note.self, returning: [Note].self) { group in
 				for url in mdFiles {
 					group.addTask {
 						let content = try String(contentsOf: url, encoding: .utf8)
@@ -75,8 +74,13 @@ struct ContentView: View {
 						return Note(id: url.lastPathComponent, title: title, content: content, path: url.path)
 					}
 				}
-				return await group.results().compactMap { try? $0 }
+				var results: [Note] = []
+				while let result = try await group.next() {
+					results.append(result)
+				}
+				return results
 			}
+			print("Loaded \(notes.count) notes from vault")
 		} catch {
 			print("Error loading vault: \(error)")
 		}
@@ -88,6 +92,7 @@ struct ContentView: View {
 				.font(.system(size: 10, weight: .semibold))
 				.padding(8)
 				.background(Color.gray.opacity(0.2))
+				.frame(maxWidth: .infinity, alignment: .leading)
 			
 			List(filteredNotes, selection: $selectedNote) { note in
 				Text("\(note.title)")
@@ -100,7 +105,40 @@ struct ContentView: View {
 					}
 			}
 			.listStyle(.plain)
-			.frame(width: 250)
+			.frame(maxWidth: .infinity, maxHeight: .infinity)
+		}
+	}
+}
+
+// Simple split view implementations
+struct HSplitView<Content: View>: View {
+	let spacing: CGFloat
+	let content: Content
+	
+	init(spacing: CGFloat = 0, @ViewBuilder content: @escaping () -> Content) {
+		self.spacing = spacing
+		self.content = content()
+	}
+	
+	var body: some View {
+		HStack(spacing: spacing) {
+			content
+		}
+	}
+}
+
+struct VSplitView<Content: View>: View {
+	let spacing: CGFloat
+	let content: Content
+	
+	init(spacing: CGFloat = 0, @ViewBuilder content: @escaping () -> Content) {
+		self.spacing = spacing
+		self.content = content()
+	}
+	
+	var body: some View {
+		VStack(spacing: spacing) {
+			content
 		}
 	}
 }
@@ -116,7 +154,7 @@ struct NoteListView: View {
 				Text("NOTES")
 					.font(.system(size: 10, weight: .semibold))
 				Spacer()
-			TextField("search...", text: $searchText)
+				TextField("search...", text: $searchText)
 					.font(.system(size: 11))
 					.background(Color.gray.opacity(0.1))
 					.padding(4)
@@ -124,6 +162,7 @@ struct NoteListView: View {
 			}
 			.padding(8)
 			.background(Color.gray.opacity(0.2))
+			.frame(maxWidth: .infinity)
 			
 			List(notes, selection: $selectedNote) { note in
 				Text("\(note.title)")
@@ -136,6 +175,7 @@ struct NoteListView: View {
 					}
 			}
 			.listStyle(.plain)
+			.frame(maxWidth: .infinity, maxHeight: .infinity)
 		}
 	}
 }
@@ -169,6 +209,27 @@ struct Note: Identifiable, Hashable {
 	let title: String
 	let content: String
 	let path: String
+	
+	// Extract internal links like [[note name]]
+	var internalLinks: [String] {
+		let pattern = "\\[\\[([\\w\\s-]+)\\]\\]"
+		guard let regex = try? NSRegularExpression(pattern: pattern) else {
+			return []
+		}
+		
+		let text = content
+		let matches = regex.matches(in: text, range: NSRange(text.startIndex..., in: text))
+		return matches.compactMap { match in
+			guard match.numberOfRanges >= 2 else { return nil }
+			let linkRange = Range(match.range(at: 1), in: text)
+			return linkRange.map { String(text[$0]).trimmingCharacters(in: .whitespaces) }
+		}
+	}
+	
+	// Bidirectional links (notes that link to this one)
+	var backlinks: [String] {
+		return [] // Will be computed later from vault
+	}
 	
 	func hash(into hasher: inout Hasher) {
 		hasher.combine(id)
